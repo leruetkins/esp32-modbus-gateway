@@ -11,13 +11,50 @@ Config *EthernetWebUI::g_config = nullptr;
 // CSS стили (встроенные для избежания дополнительного запроса)
 const char* CSS_STYLE = 
     "<style>"
-    "body{font-family:sans-serif;text-align:center;background:#252525;color:#faffff;margin:0;padding:10px;}"
-    "#c{display:inline-block;min-width:300px;max-width:600px;text-align:left;}"
-    "button{width:100%;height:40px;margin:5px 0;background:#1fa3ec;border:0;border-radius:4px;color:#fff;font-size:16px;cursor:pointer;}"
-    "button:hover{background:#0e70a4;} button.r{background:#d43535;} button.r:hover{background:#931f1f;}"
-    "table{width:100%;border-collapse:collapse;margin-bottom:15px;background:#333;}"
-    "td{padding:8px;border-bottom:1px solid #444;} input,select{width:100%;padding:8px;box-sizing:border-box;}"
-    ".e{color:#ff6b6b;} pre{text-align:left;background:#222;padding:10px;overflow-x:auto;}"
+    "body{"
+        "font-family:sans-serif;"
+        "text-align:center;"
+        "background:#252525;"
+        "color:#faffff;"
+    "}"
+    "#c{"
+        "display:inline-block;"
+        "min-width:340px;"
+    "}"
+    "button{"
+        "width:100%;"
+        "line-height:2.4rem;"
+        "background:#1fa3ec;"
+        "border:0;"
+        "border-radius:0.3rem;"
+        "font-size:1.2rem;"
+        "-webkit-transition-duration:0.4s;"
+        "transition-duration:0.4s;"
+        "color:#faffff;"
+        "cursor:pointer;"
+    "}"
+    "button:hover{"
+        "background:#0e70a4;"
+    "}"
+    "button.r{"
+        "background:#d43535;"
+    "}"
+    "button.r:hover{"
+        "background:#931f1f;"
+    "}"
+    "table{"
+        "text-align:left;"
+        "width:100%;"
+    "}"
+    "input{"
+        "width:100%;"
+    "}"
+    ".e{"
+        "color:red;"
+    "}"
+    "pre{"
+        "text-align:left;"
+    "}"
     "</style>";
 
 void EthernetWebUI::begin(ModbusClientRTU *rtu, ModbusBridgeEthernet *bridge, Config *config) {
@@ -105,13 +142,13 @@ String EthernetWebUI::htmlFooter() {
 }
 
 String EthernetWebUI::button(const char *title, const char *href, const char *cssClass) {
-    String b = F("<a href='");
+    String b = F("<form method='get' action='");
     b += href;
     b += F("'><button class='");
     b += cssClass;
-    b += F("' type='button'>");
+    b += F("'>");
     b += title;
-    b += F("</button></a>");
+    b += F("</button></form><p></p>");
     return b;
 }
 
@@ -190,7 +227,7 @@ void EthernetWebUI::handleStatus(Request &req, Response &res) {
     sprintf(buf, "<tr><td>Build:</td><td>%s %s</td></tr>", __DATE__, __TIME__);
     res.print(buf);
     
-    res.print(F("</table>"));
+    res.print(F("</table><p></p>"));
     res.print(button("Back", "/", ""));
     res.print(htmlFooter());
 }
@@ -241,7 +278,7 @@ void EthernetWebUI::handleConfig(Request &req, Response &res) {
     page += F("<tr><td>Password:</td><td><input type='password' name='wp' placeholder='Leave empty for no auth'></td></tr>");
     page += F("</table>");
     
-    page += F("<button class='r'>Save Configuration</button></form>");
+    page += F("<button class='r'>Save Configuration</button></form><p></p>");
     page += button("Back", "/", "");
     
     // JavaScript для установки значений select
@@ -303,7 +340,7 @@ void EthernetWebUI::handleDebug(Request &req, Response &res) {
     page += F("</select></td></tr>");
     page += F("<tr><td>Address:</td><td><input type='number' name='ad' min='0' max='65535' value='0'></td></tr>");
     page += F("<tr><td>Count:</td><td><input type='number' name='cn' min='1' max='125' value='1'></td></tr>");
-    page += F("</table><button class='r'>Send Request</button></form>");
+    page += F("</table><button class='r'>Send Request</button></form><p></p>");
     
     page += button("Back", "/", "");
     page += htmlFooter();
@@ -400,7 +437,7 @@ void EthernetWebUI::handleNetwork(Request &req, Response &res) {
     page += "<tr><td>DNS:</td><td><input type='text' name='dns' id='dns' value='" + displayDns.toString() + "'></td></tr>";
     page += F("</table></div>");
     
-    page += F("<button class='r'>Save & Reboot</button></form>");
+    page += F("<button class='r'>Save & Reboot</button></form><p></p>");
     page += F("<p class='e'>⚠ Device will reboot after saving</p>");
     
     page += button("Back", "/", "");
@@ -466,7 +503,7 @@ void EthernetWebUI::handleReboot(Request &req, Response &res) {
     
     String page = htmlHeader("Reboot Device");
     page += F("<p>Are you sure you want to reboot the device?</p>");
-    page += F("<form method='post'><button class='r'>⚠ CONFIRM REBOOT</button></form>");
+    page += F("<form method='post'><button class='r'>⚠ CONFIRM REBOOT</button></form><p></p>");
     page += button("Cancel", "/", "");
     page += htmlFooter();
     
@@ -495,7 +532,7 @@ void EthernetWebUI::handleUpdate(Request &req, Response &res) {
     page += F("<p class='e'>⚠ Warning: Do not disconnect power during update!</p>");
     page += F("<form method='post' enctype='multipart/form-data'>");
     page += F("<input type='file' name='firmware' accept='.bin'><br><br>");
-    page += F("<button class='r'>Upload Firmware</button></form>");
+    page += F("<button class='r'>Upload Firmware</button></form><p></p>");
     page += button("Back", "/", "");
     page += htmlFooter();
     
