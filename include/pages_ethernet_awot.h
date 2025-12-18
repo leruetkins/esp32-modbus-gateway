@@ -32,7 +32,6 @@ private:
     static void handleRebootPost(Request &req, Response &res);
     static void handleUpdate(Request &req, Response &res);
     static void handleUpdatePost(Request &req, Response &res);
-    static void handleStyleCss(Request &req, Response &res);
     static void handleFavicon(Request &req, Response &res);
     
     // Вспомогательные функции
