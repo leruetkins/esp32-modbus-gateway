@@ -8,6 +8,18 @@ ModbusClientRTU *EthernetWebUI::g_rtu = nullptr;
 ModbusBridgeEthernet *EthernetWebUI::g_bridge = nullptr;
 Config *EthernetWebUI::g_config = nullptr;
 
+// CSS стили (встроенные для избежания дополнительного запроса)
+const char* CSS_STYLE = 
+    "<style>"
+    "body{font-family:sans-serif;text-align:center;background:#252525;color:#faffff;margin:0;padding:10px;}"
+    "#c{display:inline-block;min-width:300px;max-width:600px;text-align:left;}"
+    "button{width:100%;height:40px;margin:5px 0;background:#1fa3ec;border:0;border-radius:4px;color:#fff;font-size:16px;cursor:pointer;}"
+    "button:hover{background:#0e70a4;} button.r{background:#d43535;} button.r:hover{background:#931f1f;}"
+    "table{width:100%;border-collapse:collapse;margin-bottom:15px;background:#333;}"
+    "td{padding:8px;border-bottom:1px solid #444;} input,select{width:100%;padding:8px;box-sizing:border-box;}"
+    ".e{color:#ff6b6b;} pre{text-align:left;background:#222;padding:10px;overflow-x:auto;}"
+    "</style>";
+
 void EthernetWebUI::begin(ModbusClientRTU *rtu, ModbusBridgeEthernet *bridge, Config *config) {
     g_rtu = rtu;
     g_bridge = bridge;
@@ -33,12 +45,28 @@ void EthernetWebUI::begin(ModbusClientRTU *rtu, ModbusBridgeEthernet *bridge, Co
 }
 
 void EthernetWebUI::loop() {
+    static unsigned long lastConnection = 0;
+    
+    // Ограничиваем частоту обработки соединений
+    if (millis() - lastConnection < 50) {
+        return;
+    }
+    
     EthernetClient client = server.available();
-    if (client && client.connected()) {
-        app.process(&client);
-        // Даем время на отправку данных
-        delay(5);
+    if (client) {
+        lastConnection = millis();
+        
+        if (client.connected()) {
+            app.process(&client);
+            client.flush(); // Отправляем все буферизованные данные
+        }
+        
+        // ОПТИМИЗАЦИЯ: Даем uIP стеку время на отправку финальных ACK/FIN пакетов
+        delay(50);
         client.stop();
+        
+        // Дополнительная задержка после закрытия
+        delay(10);
     }
 }
 
@@ -46,220 +74,243 @@ bool EthernetWebUI::checkAuth(Request &req, Response &res) {
     if (g_config->getWebPassword().equals("")) return true;
     
     char *auth = req.get("Authorization");
-    if (auth == nullptr) {
-        res.set("WWW-Authenticate", "Basic realm=\"ESP32 Gateway\"");
+    if (!auth) {
+        res.set("WWW-Authenticate", "Basic realm=\"ModbusGW\"");
         res.status(401);
-        res.print("Unauthorized");
+        res.print("Auth Required");
         return false;
     }
     return true;
 }
 
-void EthernetWebUI::sendHtmlHeader(Response &res, const char *title) {
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.set("Connection", "close");
-    res.set("Cache-Control", "no-cache");
-    
-    // Собираем весь заголовок в один вызов print
-    String header = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
-    header += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    header += "<link rel='icon' href='data:,'><title>ESP32 Modbus Gateway - ";
-    header += title;
-    header += "</title><style>";
-    header += "body{font-family:sans-serif;text-align:center;background:#252525;color:#faffff;}";
-    header += "#content{display:inline-block;min-width:340px;}";
-    header += "button{width:100%;line-height:2.4rem;background:#1fa3ec;border:0;";
-    header += "border-radius:0.3rem;font-size:1.2rem;color:#faffff;cursor:pointer;}";
-    header += "button:hover{background:#0e70a4;}";
-    header += "button.r{background:#d43535;}button.r:hover{background:#931f1f;}";
-    header += "table{text-align:left;width:100%;margin:10px 0;}";
-    header += "input,select{width:100%;padding:5px;box-sizing:border-box;}";
-    header += ".e{color:red;}pre{text-align:left;}";
-    header += "</style></head><body><h2>ESP32 Modbus Gateway</h2><h3>";
-    header += title;
-    header += "</h3><div id='content'>";
-    
-    res.print(header);
+// Вспомогательные функции для генерации HTML
+String EthernetWebUI::htmlHeader(const char *title) {
+    String h;
+    h.reserve(1024); // Резервируем память сразу
+    h += F("<!DOCTYPE html><html><head><meta charset='utf-8'>");
+    h += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+    h += F("<meta http-equiv='x-dns-prefetch-control' content='off'>");
+    h += F("<link rel='icon' href='data:,'><title>GW: ");
+    h += title;
+    h += F("</title>");
+    h += CSS_STYLE;
+    h += F("</head><body><h2>");
+    h += title;
+    h += F("</h2><div id='c'>");
+    return h;
 }
 
-void EthernetWebUI::sendHtmlFooter(Response &res) {
-    res.print("</div></body></html>");
+String EthernetWebUI::htmlFooter() {
+    return F("</div></body></html>");
 }
 
-void EthernetWebUI::sendButton(Response &res, const char *title, const char *href, const char *cssClass) {
-    String btn = "<form method='get' action='";
-    btn += href;
-    btn += "'><button class='";
-    btn += cssClass;
-    btn += "'>";
-    btn += title;
-    btn += "</button></form><p></p>";
-    res.print(btn);
+String EthernetWebUI::button(const char *title, const char *href, const char *cssClass) {
+    String b = F("<a href='");
+    b += href;
+    b += F("'><button class='");
+    b += cssClass;
+    b += F("' type='button'>");
+    b += title;
+    b += F("</button></a>");
+    return b;
 }
 
 void EthernetWebUI::handleRoot(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /");
-    sendHtmlHeader(res, "Main");
-    sendButton(res, "Status", "/status");
-    sendButton(res, "Config", "/config");
-    sendButton(res, "Debug", "/debug");
-    sendButton(res, "Network", "/network");
-    sendButton(res, "Firmware Update", "/update");
-    sendButton(res, "Reboot", "/reboot", "r");
-    sendHtmlFooter(res);
+    
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    
+    res.print(htmlHeader("Main Menu"));
+    res.print(button("Status", "/status", ""));
+    res.print(button("Configuration", "/config", ""));
+    res.print(button("Debug Tool", "/debug", ""));
+    res.print(button("Network", "/network", ""));
+    res.print(button("Firmware Update", "/update", ""));
+    res.print(button("Reboot Device", "/reboot", "r"));
+    res.print(htmlFooter());
 }
 
 void EthernetWebUI::handleStatus(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /status");
-    sendHtmlHeader(res, "Status");
     
-    // Собираем всю таблицу в один String
-    String table = "<table>";
-    table += "<tr><td>ESP Uptime (sec):</td><td>" + String(esp_timer_get_time() / 1000000) + "</td></tr>";
-    table += "<tr><td>Network:</td><td>Ethernet (ENC28J60)</td></tr>";
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    
+    // Отправляем заголовок
+    res.print(htmlHeader("System Status"));
+    res.print(F("<table>"));
+    
+    // Отправляем каждую строку отдельно, используя char буфер
+    char buf[150];
+    
+    sprintf(buf, "<tr><td>Uptime:</td><td>%lu s</td></tr>", (unsigned long)(esp_timer_get_time() / 1000000));
+    res.print(buf);
     
     uint8_t mac[6];
     Ethernet.macAddress(mac);
-    char macStr[18];
-    sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    table += "<tr><td>MAC:</td><td>" + String(macStr) + "</td></tr>";
-    table += "<tr><td>IP:</td><td>" + Ethernet.localIP().toString() + "</td></tr>";
-    table += "<tr><td>Gateway:</td><td>" + Ethernet.gatewayIP().toString() + "</td></tr>";
-    table += "<tr><td>Subnet:</td><td>" + Ethernet.subnetMask().toString() + "</td></tr>";
-    table += "<tr><td>RTU Messages:</td><td>" + String(g_rtu->getMessageCount()) + "</td></tr>";
-    table += "<tr><td>RTU Pending:</td><td>" + String(g_rtu->pendingRequests()) + "</td></tr>";
-    table += "<tr><td>RTU Errors:</td><td>" + String(g_rtu->getErrorCount()) + "</td></tr>";
-    table += "<tr><td>Bridge Messages:</td><td>" + String(g_bridge->getMessageCount()) + "</td></tr>";
-    table += "<tr><td>Bridge Clients:</td><td>" + String(g_bridge->activeClients()) + "</td></tr>";
-    table += "<tr><td>Bridge Errors:</td><td>" + String(g_bridge->getErrorCount()) + "</td></tr>";
-    table += "<tr><td>&nbsp;</td><td></td></tr>";
-    table += "<tr><td>Build time:</td><td>" __DATE__ " " __TIME__ "</td></tr>";
-    table += "</table><p></p>";
+    sprintf(buf, "<tr><td>MAC:</td><td>%02X:%02X:%02X:%02X:%02X:%02X</td></tr>", 
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    res.print(buf);
     
-    res.print(table);
-    sendButton(res, "Back", "/");
-    sendHtmlFooter(res);
+    sprintf(buf, "<tr><td>IP:</td><td>%s</td></tr>", Ethernet.localIP().toString().c_str());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>Gateway:</td><td>%s</td></tr>", Ethernet.gatewayIP().toString().c_str());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>Subnet:</td><td>%s</td></tr>", Ethernet.subnetMask().toString().c_str());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>RTU Messages:</td><td>%u</td></tr>", g_rtu->getMessageCount());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>RTU Pending:</td><td>%u</td></tr>", g_rtu->pendingRequests());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>RTU Errors:</td><td>%u</td></tr>", g_rtu->getErrorCount());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>TCP Messages:</td><td>%u</td></tr>", g_bridge->getMessageCount());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>TCP Active:</td><td>%u</td></tr>", g_bridge->activeClients());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>TCP Errors:</td><td>%u</td></tr>", g_bridge->getErrorCount());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>RAM Free:</td><td>%u bytes</td></tr>", ESP.getFreeHeap());
+    res.print(buf);
+    
+    sprintf(buf, "<tr><td>Build:</td><td>%s %s</td></tr>", __DATE__, __TIME__);
+    res.print(buf);
+    
+    res.print(F("</table>"));
+    res.print(button("Back", "/", ""));
+    res.print(htmlFooter());
 }
 
 void EthernetWebUI::handleConfig(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /config");
-    sendHtmlHeader(res, "Configuration");
     
-    // Собираем всю форму в один String для минимизации вызовов print
-    String form = "<form method='post'><h3>Modbus TCP</h3><table>";
-    form += "<tr><td><label for='tp'>TCP Port</label></td>";
-    form += "<td><input type='number' min='1' max='65535' id='tp' name='tp' value='" + String(g_config->getTcpPort()) + "'></td></tr>";
-    form += "<tr><td><label for='tt'>TCP Timeout (ms)</label></td>";
-    form += "<td><input type='number' min='1' id='tt' name='tt' value='" + String(g_config->getTcpTimeout()) + "'></td></tr>";
-    form += "</table><h3>Modbus RTU</h3><table>";
-    form += "<tr><td><label for='mb'>Baud rate</label></td>";
-    form += "<td><input type='number' id='mb' name='mb' value='" + String(g_config->getModbusBaudRate()) + "'></td></tr>";
-    form += "<tr><td><label for='md'>Data bits</label></td>";
-    form += "<td><input type='number' min='5' max='8' id='md' name='md' value='" + String(g_config->getModbusDataBits()) + "'></td></tr>";
-    form += "<tr><td><label for='mp'>Parity</label></td>";
-    form += "<td><select id='mp' name='mp' data-value='" + String(g_config->getModbusParity()) + "'>";
-    form += "<option value='0'>None</option><option value='2'>Even</option><option value='3'>Odd</option>";
-    form += "</select></td></tr>";
-    form += "<tr><td><label for='ms'>Stop bits</label></td>";
-    form += "<td><select id='ms' name='ms' data-value='" + String(g_config->getModbusStopBits()) + "'>";
-    form += "<option value='1'>1 bit</option><option value='2'>1.5 bits</option><option value='3'>2 bits</option>";
-    form += "</select></td></tr>";
+    String page = htmlHeader("Configuration");
+    page += F("<form method='post'>");
     
-    res.print(form);
+    page += F("<h3>Modbus TCP</h3><table>");
+    page += "<tr><td>TCP Port:</td><td><input type='number' name='tp' min='1' max='65535' value='" + String(g_config->getTcpPort()) + "'></td></tr>";
+    page += "<tr><td>Timeout (ms):</td><td><input type='number' name='tt' min='1' value='" + String(g_config->getTcpTimeout()) + "'></td></tr>";
+    page += F("</table>");
     
-    String form2 = "<tr><td><label for='mr'>RTS Pin</label></td>";
-    form2 += "<td><select id='mr' name='mr' data-value='" + String(g_config->getModbusRtsPin()) + "'>";
-    form2 += "<option value='-1'>Auto</option><option value='4'>D4</option><option value='13'>D13</option>";
-    form2 += "<option value='14'>D14</option><option value='18'>D18</option><option value='19'>D19</option>";
-    form2 += "<option value='21'>D21</option><option value='22'>D22</option><option value='23'>D23</option>";
-    form2 += "<option value='25'>D25</option><option value='26'>D26</option><option value='27'>D27</option>";
-    form2 += "<option value='32'>D32</option><option value='33'>D33</option>";
-    form2 += "</select></td></tr>";
-    form2 += "</table><h3>Serial (Debug)</h3><table>";
-    form2 += "<tr><td><label for='sb'>Baud rate</label></td>";
-    form2 += "<td><input type='number' id='sb' name='sb' value='" + String(g_config->getSerialBaudRate()) + "'></td></tr>";
-    form2 += "<tr><td><label for='sd'>Data bits</label></td>";
-    form2 += "<td><input type='number' min='5' max='8' id='sd' name='sd' value='" + String(g_config->getSerialDataBits()) + "'></td></tr>";
-    form2 += "<tr><td><label for='sp'>Parity</label></td>";
-    form2 += "<td><select id='sp' name='sp' data-value='" + String(g_config->getSerialParity()) + "'>";
-    form2 += "<option value='0'>None</option><option value='2'>Even</option><option value='3'>Odd</option>";
-    form2 += "</select></td></tr>";
-    form2 += "<tr><td><label for='ss'>Stop bits</label></td>";
-    form2 += "<td><select id='ss' name='ss' data-value='" + String(g_config->getSerialStopBits()) + "'>";
-    form2 += "<option value='1'>1 bit</option><option value='2'>1.5 bits</option><option value='3'>2 bits</option>";
-    form2 += "</select></td></tr>";
-    form2 += "</table><h3>Other</h3><table>";
-    form2 += "<tr><td><label for='wp'>Web password</label></td>";
-    form2 += "<td><input type='password' id='wp' name='wp' value='****'></td></tr>";
-    form2 += "</table><button class='r'>Save</button></form><p></p>";
+    page += F("<h3>Modbus RTU</h3><table>");
+    page += "<tr><td>Baud Rate:</td><td><input type='number' name='mb' value='" + String(g_config->getModbusBaudRate()) + "'></td></tr>";
+    page += "<tr><td>Data Bits:</td><td><input type='number' name='md' min='5' max='8' value='" + String(g_config->getModbusDataBits()) + "'></td></tr>";
+    page += F("<tr><td>Parity:</td><td><select name='mp' id='mp'>");
+    page += F("<option value='0'>None</option><option value='2'>Even</option><option value='3'>Odd</option>");
+    page += F("</select></td></tr>");
+    page += F("<tr><td>Stop Bits:</td><td><select name='ms' id='ms'>");
+    page += F("<option value='1'>1</option><option value='2'>1.5</option><option value='3'>2</option>");
+    page += F("</select></td></tr>");
+    page += F("<tr><td>RTS Pin:</td><td><select name='mr' id='mr'>");
+    page += F("<option value='-1'>Auto</option><option value='4'>GPIO4</option><option value='13'>GPIO13</option>");
+    page += F("<option value='14'>GPIO14</option><option value='18'>GPIO18</option><option value='19'>GPIO19</option>");
+    page += F("<option value='21'>GPIO21</option><option value='22'>GPIO22</option><option value='23'>GPIO23</option>");
+    page += F("<option value='25'>GPIO25</option><option value='26'>GPIO26</option><option value='27'>GPIO27</option>");
+    page += F("<option value='32'>GPIO32</option><option value='33'>GPIO33</option>");
+    page += F("</select></td></tr>");
+    page += F("</table>");
     
-    res.print(form2);
-    sendButton(res, "Back", "/");
+    page += F("<h3>Serial Debug</h3><table>");
+    page += "<tr><td>Baud Rate:</td><td><input type='number' name='sb' value='" + String(g_config->getSerialBaudRate()) + "'></td></tr>";
+    page += "<tr><td>Data Bits:</td><td><input type='number' name='sd' min='5' max='8' value='" + String(g_config->getSerialDataBits()) + "'></td></tr>";
+    page += F("<tr><td>Parity:</td><td><select name='sp' id='sp'>");
+    page += F("<option value='0'>None</option><option value='2'>Even</option><option value='3'>Odd</option>");
+    page += F("</select></td></tr>");
+    page += F("<tr><td>Stop Bits:</td><td><select name='ss' id='ss'>");
+    page += F("<option value='1'>1</option><option value='2'>1.5</option><option value='3'>2</option>");
+    page += F("</select></td></tr>");
+    page += F("</table>");
     
-    res.print("<script>(function(){var s=document.querySelectorAll('select[data-value]');");
-    res.print("for(d of s){d.querySelector(`option[value='${d.dataset.value}']`).selected=true}})();</script>");
+    page += F("<h3>Web Interface</h3><table>");
+    page += F("<tr><td>Password:</td><td><input type='password' name='wp' placeholder='Leave empty for no auth'></td></tr>");
+    page += F("</table>");
     
-    sendHtmlFooter(res);
+    page += F("<button class='r'>Save Configuration</button></form>");
+    page += button("Back", "/", "");
+    
+    // JavaScript для установки значений select
+    page += "<script>";
+    page += "document.getElementById('mp').value='" + String(g_config->getModbusParity()) + "';";
+    page += "document.getElementById('ms').value='" + String(g_config->getModbusStopBits()) + "';";
+    page += "document.getElementById('mr').value='" + String(g_config->getModbusRtsPin()) + "';";
+    page += "document.getElementById('sp').value='" + String(g_config->getSerialParity()) + "';";
+    page += "document.getElementById('ss').value='" + String(g_config->getSerialStopBits()) + "';";
+    page += "</script>";
+    
+    page += htmlFooter();
+    
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    res.print(page);
 }
 
 void EthernetWebUI::handleConfigPost(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] POST /config");
-    char buffer[32];
     
-    if (req.query("tp", buffer, sizeof(buffer))) g_config->setTcpPort(atoi(buffer));
-    if (req.query("tt", buffer, sizeof(buffer))) g_config->setTcpTimeout(atoi(buffer));
-    if (req.query("mb", buffer, sizeof(buffer))) g_config->setModbusBaudRate(atol(buffer));
-    if (req.query("md", buffer, sizeof(buffer))) g_config->setModbusDataBits(atoi(buffer));
-    if (req.query("mp", buffer, sizeof(buffer))) g_config->setModbusParity(atoi(buffer));
-    if (req.query("ms", buffer, sizeof(buffer))) g_config->setModbusStopBits(atoi(buffer));
-    if (req.query("mr", buffer, sizeof(buffer))) g_config->setModbusRtsPin(atoi(buffer));
-    if (req.query("sb", buffer, sizeof(buffer))) g_config->setSerialBaudRate(atol(buffer));
-    if (req.query("sd", buffer, sizeof(buffer))) g_config->setSerialDataBits(atoi(buffer));
-    if (req.query("sp", buffer, sizeof(buffer))) g_config->setSerialParity(atoi(buffer));
-    if (req.query("ss", buffer, sizeof(buffer))) g_config->setSerialStopBits(atoi(buffer));
-    if (req.query("wp", buffer, sizeof(buffer)) && strcmp(buffer, "****") != 0) {
-        g_config->setWebPassword(String(buffer));
+    char buf[32];
+    if (req.query("tp", buf, sizeof(buf))) g_config->setTcpPort(atoi(buf));
+    if (req.query("tt", buf, sizeof(buf))) g_config->setTcpTimeout(atoi(buf));
+    if (req.query("mb", buf, sizeof(buf))) g_config->setModbusBaudRate(atol(buf));
+    if (req.query("md", buf, sizeof(buf))) g_config->setModbusDataBits(atoi(buf));
+    if (req.query("mp", buf, sizeof(buf))) g_config->setModbusParity(atoi(buf));
+    if (req.query("ms", buf, sizeof(buf))) g_config->setModbusStopBits(atoi(buf));
+    if (req.query("mr", buf, sizeof(buf))) g_config->setModbusRtsPin(atoi(buf));
+    if (req.query("sb", buf, sizeof(buf))) g_config->setSerialBaudRate(atol(buf));
+    if (req.query("sd", buf, sizeof(buf))) g_config->setSerialDataBits(atoi(buf));
+    if (req.query("sp", buf, sizeof(buf))) g_config->setSerialParity(atoi(buf));
+    if (req.query("ss", buf, sizeof(buf))) g_config->setSerialStopBits(atoi(buf));
+    if (req.query("wp", buf, sizeof(buf)) && strlen(buf) > 0) {
+        g_config->setWebPassword(String(buf));
     }
     
-    res.status(303);
     res.set("Location", "/");
+    res.status(303);
     res.set("Connection", "close");
-    res.print("<html><head><meta http-equiv='refresh' content='0;url=/'></head><body>Saved!</body></html>");
+    res.print("Saved");
 }
 
 void EthernetWebUI::handleDebug(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /debug");
-    sendHtmlHeader(res, "Debug");
     
-    String form = "<form method='post'><table>";
-    form += "<tr><td><label for='slave'>Slave ID</label></td>";
-    form += "<td><input type='number' min='0' max='247' id='slave' name='slave' value='1'></td></tr>";
-    form += "<tr><td><label for='func'>Function</label></td>";
-    form += "<td><select id='func' name='func'>";
-    form += "<option value='1'>01 Read Coils</option>";
-    form += "<option value='2'>02 Read Discrete Inputs</option>";
-    form += "<option value='3' selected>03 Read Holding Register</option>";
-    form += "<option value='4'>04 Read Input Register</option>";
-    form += "</select></td></tr>";
-    form += "<tr><td><label for='reg'>Register</label></td>";
-    form += "<td><input type='number' min='0' max='65535' id='reg' name='reg' value='1'></td></tr>";
-    form += "<tr><td><label for='count'>Count</label></td>";
-    form += "<td><input type='number' min='0' max='65535' id='count' name='count' value='1'></td></tr>";
-    form += "</table><button class='r'>Send</button></form><p></p>";
+    String page = htmlHeader("Debug Tool");
+    page += F("<form method='post'><table>");
+    page += F("<tr><td>Slave ID:</td><td><input type='number' name='id' min='1' max='247' value='1'></td></tr>");
+    page += F("<tr><td>Function:</td><td><select name='fc'>");
+    page += F("<option value='1'>01 - Read Coils</option>");
+    page += F("<option value='2'>02 - Read Discrete Inputs</option>");
+    page += F("<option value='3' selected>03 - Read Holding Registers</option>");
+    page += F("<option value='4'>04 - Read Input Registers</option>");
+    page += F("</select></td></tr>");
+    page += F("<tr><td>Address:</td><td><input type='number' name='ad' min='0' max='65535' value='0'></td></tr>");
+    page += F("<tr><td>Count:</td><td><input type='number' name='cn' min='1' max='125' value='1'></td></tr>");
+    page += F("</table><button class='r'>Send Request</button></form>");
     
-    res.print(form);
-    sendButton(res, "Back", "/");
-    sendHtmlFooter(res);
+    page += button("Back", "/", "");
+    page += htmlFooter();
+    
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    res.print(page);
 }
 
 void EthernetWebUI::handleDebugPost(Request &req, Response &res) {
@@ -267,149 +318,144 @@ void EthernetWebUI::handleDebugPost(Request &req, Response &res) {
     
     dbgln("[webserver] POST /debug");
     
-    char buffer[32];
-    String slaveId = "1", reg = "1", func = "3", count = "1";
+    char buf[16];
+    int id = 1, fc = 3, ad = 0, cn = 1;
+    if (req.query("id", buf, sizeof(buf))) id = atoi(buf);
+    if (req.query("fc", buf, sizeof(buf))) fc = atoi(buf);
+    if (req.query("ad", buf, sizeof(buf))) ad = atoi(buf);
+    if (req.query("cn", buf, sizeof(buf))) cn = atoi(buf);
     
-    if (req.query("slave", buffer, sizeof(buffer))) slaveId = String(buffer);
-    if (req.query("reg", buffer, sizeof(buffer))) reg = String(buffer);
-    if (req.query("func", buffer, sizeof(buffer))) func = String(buffer);
-    if (req.query("count", buffer, sizeof(buffer))) count = String(buffer);
+    String page = htmlHeader("Debug Result");
     
-    sendHtmlHeader(res, "Debug");
-    res.print("<pre>");
-    
+    // Выполнение Modbus запроса
     auto previousLevel = MBUlogLvl;
     MBUlogLvl = LOG_LEVEL_DEBUG;
-    ModbusMessage answer = g_rtu->syncRequest(0xdeadbeef, slaveId.toInt(), func.toInt(), reg.toInt(), count.toInt());
+    ModbusMessage response = g_rtu->syncRequest(0xDEADBEEF, id, fc, ad, cn);
     MBUlogLvl = previousLevel;
     
-    res.print("</pre>");
+    Modbus::Error err = response.getError();
     
-    auto error = answer.getError();
-    if (error == SUCCESS) {
-        auto cnt = answer[2];
-        String result = "<span>Answer: 0x";
-        for (size_t i = 0; i < cnt; i++) {
-            char hex[3];
-            sprintf(hex, "%02x", answer[i + 3]);
-            result += hex;
+    if (err == Modbus::Error::SUCCESS) {
+        page += F("<h3 style='color:#5f5'>✓ SUCCESS</h3>");
+        page += "<table><tr><td>Slave ID:</td><td>" + String(id) + "</td></tr>";
+        page += "<tr><td>Function:</td><td>" + String(fc) + "</td></tr>";
+        page += "<tr><td>Address:</td><td>" + String(ad) + "</td></tr>";
+        page += "<tr><td>Count:</td><td>" + String(cn) + "</td></tr></table>";
+        
+        page += F("<h4>Response Data (HEX):</h4><pre>");
+        for (size_t i = 3; i < response.size(); ++i) {
+            if (response[i] < 0x10) page += "0";
+            page += String(response[i], HEX);
+            page += " ";
+            if ((i - 2) % 16 == 0) page += "\n";
         }
-        result += "</span>";
-        res.print(result);
+        page += F("</pre>");
     } else {
-        char hex[3];
-        sprintf(hex, "%02x", error);
-        String err = "<span class='e'>Error: 0x" + String(hex) + " (" + ErrorName(error) + ")</span>";
-        res.print(err);
+        page += F("<h3 class='e'>✗ ERROR</h3>");
+        page += "<table><tr><td>Error Code:</td><td>" + String((int)err) + "</td></tr>";
+        page += "<tr><td>Description:</td><td>" + ErrorName(err) + "</td></tr></table>";
     }
     
-    String form = "<form method='post'><table>";
-    form += "<tr><td><label for='slave'>Slave ID</label></td>";
-    form += "<td><input type='number' min='0' max='247' id='slave' name='slave' value='" + slaveId + "'></td></tr>";
-    form += "<tr><td><label for='func'>Function</label></td>";
-    form += "<td><select id='func' name='func' data-value='" + func + "'>";
-    form += "<option value='1'>01 Read Coils</option>";
-    form += "<option value='2'>02 Read Discrete Inputs</option>";
-    form += "<option value='3'>03 Read Holding Register</option>";
-    form += "<option value='4'>04 Read Input Register</option>";
-    form += "</select></td></tr>";
-    form += "<tr><td><label for='reg'>Register</label></td>";
-    form += "<td><input type='number' min='0' max='65535' id='reg' name='reg' value='" + reg + "'></td></tr>";
-    form += "<tr><td><label for='count'>Count</label></td>";
-    form += "<td><input type='number' min='0' max='65535' id='count' name='count' value='" + count + "'></td></tr>";
-    form += "</table><button class='r'>Send</button></form><p></p>";
-    form += "<script>(function(){var s=document.querySelectorAll('select[data-value]');";
-    form += "for(d of s){d.querySelector(`option[value='${d.dataset.value}']`).selected=true}})();</script>";
+    page += button("Try Again", "/debug", "");
+    page += button("Back", "/", "");
+    page += htmlFooter();
     
-    res.print(form);
-    sendButton(res, "Back", "/");
-    sendHtmlFooter(res);
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    res.print(page);
 }
 
 void EthernetWebUI::handleNetwork(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /network");
-    sendHtmlHeader(res, "Network Config");
     
-    String page = "<h3>Current Status</h3><table>";
-    page += "<tr><td>Current IP:</td><td>" + Ethernet.localIP().toString() + "</td></tr>";
+    String page = htmlHeader("Network Config");
+    
+    page += F("<h3>Current Status</h3><table>");
+    page += "<tr><td>IP Address:</td><td>" + Ethernet.localIP().toString() + "</td></tr>";
     page += "<tr><td>Gateway:</td><td>" + Ethernet.gatewayIP().toString() + "</td></tr>";
     page += "<tr><td>Subnet:</td><td>" + Ethernet.subnetMask().toString() + "</td></tr>";
-    page += "</table><h3>Network Configuration</h3>";
-    page += "<form method='post'><table>";
-    page += "<tr><td><label for='dhcp'>Use DHCP</label></td>";
-    page += "<td><input type='checkbox' id='dhcp' name='dhcp' value='1'";
-    if (g_config->getUseDhcp()) page += " checked";
-    page += " onchange='toggleStatic()'></td></tr>";
-    page += "</table><div id='static-config'";
-    if (g_config->getUseDhcp()) page += " style='display:none'";
-    page += "><table>";
+    page += F("</table>");
+    
+    page += F("<h3>Configuration</h3>");
+    page += F("<form method='post'><table>");
+    page += F("<tr><td>Use DHCP:</td><td><input type='checkbox' name='dhcp' id='dhcp' value='1'");
+    if (g_config->getUseDhcp()) page += F(" checked");
+    page += F(" onchange='toggleStatic()'></td></tr>");
+    page += F("</table>");
+    
+    page += F("<div id='static' style='display:");
+    page += g_config->getUseDhcp() ? F("none") : F("block");
+    page += F("'><table>");
     
     IPAddress displayIp = g_config->getUseDhcp() ? Ethernet.localIP() : g_config->getStaticIp();
     IPAddress displayGw = g_config->getUseDhcp() ? Ethernet.gatewayIP() : g_config->getStaticGateway();
     IPAddress displaySn = g_config->getUseDhcp() ? Ethernet.subnetMask() : g_config->getStaticSubnet();
     IPAddress displayDns = g_config->getUseDhcp() ? Ethernet.gatewayIP() : g_config->getStaticDns();
     
-    page += "<tr><td><label for='ip'>Static IP</label></td>";
-    page += "<td><input type='text' id='ip' name='ip' value='" + displayIp.toString() + "'></td></tr>";
-    page += "<tr><td><label for='gw'>Gateway</label></td>";
-    page += "<td><input type='text' id='gw' name='gw' value='" + displayGw.toString() + "'></td></tr>";
-    page += "<tr><td><label for='sn'>Subnet</label></td>";
-    page += "<td><input type='text' id='sn' name='sn' value='" + displaySn.toString() + "'></td></tr>";
-    page += "<tr><td><label for='dns'>DNS</label></td>";
-    page += "<td><input type='text' id='dns' name='dns' value='" + displayDns.toString() + "'></td></tr>";
-    page += "</table></div>";
-    page += "<button class='r'>Save & Reboot</button></form><p></p>";
-    page += "<p class='e'>Note: Device will reboot after saving network settings</p>";
+    page += "<tr><td>Static IP:</td><td><input type='text' name='ip' id='ip' value='" + displayIp.toString() + "'></td></tr>";
+    page += "<tr><td>Gateway:</td><td><input type='text' name='gw' id='gw' value='" + displayGw.toString() + "'></td></tr>";
+    page += "<tr><td>Subnet:</td><td><input type='text' name='sn' id='sn' value='" + displaySn.toString() + "'></td></tr>";
+    page += "<tr><td>DNS:</td><td><input type='text' name='dns' id='dns' value='" + displayDns.toString() + "'></td></tr>";
+    page += F("</table></div>");
     
+    page += F("<button class='r'>Save & Reboot</button></form>");
+    page += F("<p class='e'>⚠ Device will reboot after saving</p>");
+    
+    page += button("Back", "/", "");
+    
+    // JavaScript для переключения статических настроек
+    page += F("<script>");
+    page += F("function toggleStatic(){");
+    page += F("var dhcp=document.getElementById('dhcp').checked;");
+    page += F("document.getElementById('static').style.display=dhcp?'none':'block';");
+    page += F("if(!dhcp){");
+    page += "document.getElementById('ip').value='" + Ethernet.localIP().toString() + "';";
+    page += "document.getElementById('gw').value='" + Ethernet.gatewayIP().toString() + "';";
+    page += "document.getElementById('sn').value='" + Ethernet.subnetMask().toString() + "';";
+    page += "document.getElementById('dns').value='" + Ethernet.gatewayIP().toString() + "';";
+    page += F("}}");
+    page += F("</script>");
+    
+    page += htmlFooter();
+    
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
     res.print(page);
-    
-    String script = "<script>function toggleStatic(){var dhcp=document.getElementById('dhcp').checked;";
-    script += "var staticDiv=document.getElementById('static-config');staticDiv.style.display=dhcp?'none':'block';";
-    script += "if(!dhcp){document.getElementById('ip').value='" + Ethernet.localIP().toString() + "';";
-    script += "document.getElementById('gw').value='" + Ethernet.gatewayIP().toString() + "';";
-    script += "document.getElementById('sn').value='" + Ethernet.subnetMask().toString() + "';";
-    script += "document.getElementById('dns').value='" + Ethernet.gatewayIP().toString() + "';}}</script>";
-    
-    res.print(script);
-    sendButton(res, "Back", "/");
-    sendHtmlFooter(res);
 }
 
 void EthernetWebUI::handleNetworkPost(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] POST /network");
-    char buffer[32];
     
-    bool useDhcp = req.query("dhcp", buffer, sizeof(buffer));
+    char buf[32];
+    bool useDhcp = req.query("dhcp", buf, sizeof(buf));
     g_config->setUseDhcp(useDhcp);
     
     if (!useDhcp) {
-        if (req.query("ip", buffer, sizeof(buffer))) {
+        if (req.query("ip", buf, sizeof(buf))) {
             IPAddress ip;
-            if (ip.fromString(buffer)) g_config->setStaticIp(ip);
+            if (ip.fromString(buf)) g_config->setStaticIp(ip);
         }
-        if (req.query("gw", buffer, sizeof(buffer))) {
+        if (req.query("gw", buf, sizeof(buf))) {
             IPAddress gw;
-            if (gw.fromString(buffer)) g_config->setStaticGateway(gw);
+            if (gw.fromString(buf)) g_config->setStaticGateway(gw);
         }
-        if (req.query("sn", buffer, sizeof(buffer))) {
+        if (req.query("sn", buf, sizeof(buf))) {
             IPAddress sn;
-            if (sn.fromString(buffer)) g_config->setStaticSubnet(sn);
+            if (sn.fromString(buf)) g_config->setStaticSubnet(sn);
         }
-        if (req.query("dns", buffer, sizeof(buffer))) {
+        if (req.query("dns", buf, sizeof(buf))) {
             IPAddress dns;
-            if (dns.fromString(buffer)) g_config->setStaticDns(dns);
+            if (dns.fromString(buf)) g_config->setStaticDns(dns);
         }
     }
     
-    sendHtmlHeader(res, "Network Saved");
-    res.print("<p>Network configuration saved!</p><p>Device will reboot in 3 seconds...</p>");
-    sendHtmlFooter(res);
-    
-    delay(3000);
+    res.set("Connection", "close");
+    res.print("Saved. Rebooting...");
+    delay(1000);
     ESP.restart();
 }
 
@@ -417,16 +463,24 @@ void EthernetWebUI::handleReboot(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /reboot");
-    sendHtmlHeader(res, "Reboot");
-    sendButton(res, "Back", "/");
-    res.print("<form method='post'><button class='r'>Yes, do it!</button></form>");
-    sendHtmlFooter(res);
+    
+    String page = htmlHeader("Reboot Device");
+    page += F("<p>Are you sure you want to reboot the device?</p>");
+    page += F("<form method='post'><button class='r'>⚠ CONFIRM REBOOT</button></form>");
+    page += button("Cancel", "/", "");
+    page += htmlFooter();
+    
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    res.print(page);
 }
 
 void EthernetWebUI::handleRebootPost(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] POST /reboot");
+    
+    res.set("Connection", "close");
     res.print("Rebooting...");
     delay(1000);
     ESP.restart();
@@ -436,12 +490,18 @@ void EthernetWebUI::handleUpdate(Request &req, Response &res) {
     if (!checkAuth(req, res)) return;
     
     dbgln("[webserver] GET /update");
-    sendHtmlHeader(res, "Firmware Update");
-    res.print("<form method='post' enctype='multipart/form-data'>");
-    res.print("<input type='file' name='file' required/><p></p>");
-    res.print("<button class='r'>Upload</button></form><p></p>");
-    sendButton(res, "Back", "/");
-    sendHtmlFooter(res);
+    
+    String page = htmlHeader("Firmware Update");
+    page += F("<p class='e'>⚠ Warning: Do not disconnect power during update!</p>");
+    page += F("<form method='post' enctype='multipart/form-data'>");
+    page += F("<input type='file' name='firmware' accept='.bin'><br><br>");
+    page += F("<button class='r'>Upload Firmware</button></form>");
+    page += button("Back", "/", "");
+    page += htmlFooter();
+    
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Connection", "close");
+    res.print(page);
 }
 
 void EthernetWebUI::handleUpdatePost(Request &req, Response &res) {
@@ -449,11 +509,14 @@ void EthernetWebUI::handleUpdatePost(Request &req, Response &res) {
     
     dbgln("[webserver] POST /update - OTA");
     
+    // Здесь НЕ используем буферизацию String - файл слишком большой
+    // Используем потоковое чтение
     int contentLength = req.left();
     
     if (contentLength <= 0) {
         res.status(400);
-        res.print("Error: No Content-Length");
+        res.set("Connection", "close");
+        res.print("Error: No content");
         return;
     }
     
@@ -462,37 +525,50 @@ void EthernetWebUI::handleUpdatePost(Request &req, Response &res) {
     
     if (!Update.begin(contentLength)) {
         res.status(500);
+        res.set("Connection", "close");
         res.print("Error: Not enough space");
+        Update.printError(Serial);
         return;
     }
     
-    size_t written = 0;
+    // Потоковое чтение и запись прошивки
     uint8_t buff[128];
+    size_t written = 0;
     
     while (written < contentLength && req.available()) {
         int len = req.read(buff, sizeof(buff));
         if (len > 0) {
-            Update.write(buff, len);
+            if (Update.write(buff, len) != len) {
+                res.status(500);
+                res.set("Connection", "close");
+                res.print("Error: Write failed");
+                Update.printError(Serial);
+                return;
+            }
             written += len;
         }
     }
     
-    if (Update.end()) {
-        res.status(200);
-        res.print("Update Success! Rebooting...");
+    if (Update.end(true)) {
+        dbgln("[webserver] OTA success");
+        res.set("Connection", "close");
+        res.print("Update successful! Rebooting...");
         delay(1000);
         ESP.restart();
     } else {
         res.status(500);
-        res.print("Update Failed");
+        res.set("Connection", "close");
+        res.print("Error: Update failed");
+        Update.printError(Serial);
     }
 }
 
 void EthernetWebUI::handleFavicon(Request &req, Response &res) {
+    res.status(204); // No content
     res.set("Connection", "close");
-    res.status(204);
 }
 
+// Функция декодирования ошибок Modbus
 const String ErrorName(Modbus::Error code) {
     switch (code) {
         case Modbus::Error::SUCCESS: return "Success";
@@ -522,6 +598,6 @@ const String ErrorName(Modbus::Error code) {
         case Modbus::Error::ASCII_FRAME_ERR: return "ASCII frame error";
         case Modbus::Error::ASCII_CRC_ERR: return "ASCII crc error";
         case Modbus::Error::ASCII_INVALID_CHAR: return "ASCII invalid character";
-        default: return "undefined error";
+        default: return "Unknown error";
     }
 }

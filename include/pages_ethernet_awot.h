@@ -34,10 +34,10 @@ private:
     static void handleUpdatePost(Request &req, Response &res);
     static void handleFavicon(Request &req, Response &res);
     
-    // Вспомогательные функции
-    static void sendHtmlHeader(Response &res, const char *title);
-    static void sendHtmlFooter(Response &res);
-    static void sendButton(Response &res, const char *title, const char *href, const char *cssClass = "");
+    // Вспомогательные функции для генерации HTML
+    static String htmlHeader(const char *title);
+    static String htmlFooter();
+    static String button(const char *title, const char *href, const char *cssClass = "");
     static bool checkAuth(Request &req, Response &res);
 };
 
