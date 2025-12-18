@@ -82,28 +82,19 @@ void EthernetWebUI::begin(ModbusClientRTU *rtu, ModbusBridgeEthernet *bridge, Co
 }
 
 void EthernetWebUI::loop() {
-    static unsigned long lastConnection = 0;
-    
-    // Ограничиваем частоту обработки соединений
-    if (millis() - lastConnection < 50) {
-        return;
-    }
-    
     EthernetClient client = server.available();
     if (client) {
-        lastConnection = millis();
-        
-        if (client.connected()) {
-            app.process(&client);
-            client.flush(); // Отправляем все буферизованные данные
+        // Ждем данных с коротким таймаутом
+        unsigned long timeout = millis() + 500;
+        while (!client.available() && millis() < timeout) {
+            yield(); // Даем время другим задачам
         }
         
-        // ОПТИМИЗАЦИЯ: Даем uIP стеку время на отправку финальных ACK/FIN пакетов
-        delay(50);
-        client.stop();
+        if (client.available()) {
+            app.process(&client);
+        }
         
-        // Дополнительная задержка после закрытия
-        delay(10);
+        client.stop();
     }
 }
 

@@ -36,8 +36,13 @@ GND         →    GND
 **Important notes:** 
 - Use `esp32-enc28j60` environment for building: `platformio run -e esp32-enc28j60 -t upload`
 - Disconnect ENC28J60 power before flashing ESP32
-- Web interface is accessible via IP address (DHCP by default)
-- Network configuration is available in the "Network" section of the web interface
+- **Two modes of operation:**
+  - **WORK MODE** (default): Modbus TCP enabled, Web UI disabled
+  - **CONFIG MODE**: Web UI enabled, Modbus TCP disabled
+- **To enter CONFIG MODE**: Short GPIO15 to GND (use jumper or button) during power-on/reset
+- **To enter WORK MODE**: Remove jumper and reboot (GPIO15 floating/HIGH)
+- Web UI available at DHCP IP address (check Serial Monitor for IP)
+- Supports 1 Modbus TCP client in WORK mode (optimized for stability)
 
 
 ## Screenshots

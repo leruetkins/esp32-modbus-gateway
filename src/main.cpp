@@ -20,6 +20,7 @@
 
 #ifdef USE_ENC28J60
   EthernetWebUI webUI;
+  bool configMode = false; // Режим работы: false = Modbus TCP, true = Web Config
 #else
   AsyncWebServer webServer(80);
   WiFiManager wm;
@@ -45,6 +46,28 @@ void setup() {
   debugSerial.begin(config.getSerialBaudRate(), config.getSerialConfig());
   
 #ifdef USE_ENC28J60
+  // Проверяем режим работы по GPIO15 (джампер/кнопка)
+  // GPIO15 = LOW (закорочен на GND) = режим настройки (веб-портал)
+  // GPIO15 = HIGH (не закорочен) = рабочий режим (только Modbus TCP)
+  #define CONFIG_MODE_PIN 15
+  pinMode(CONFIG_MODE_PIN, INPUT_PULLUP);
+  delay(100); // Даем время стабилизироваться
+  configMode = (digitalRead(CONFIG_MODE_PIN) == LOW);
+  
+  if (configMode) {
+    dbgln("===========================================");
+    dbgln("  CONFIG MODE: Web interface ENABLED");
+    dbgln("  Modbus TCP DISABLED for configuration");
+    dbgln("  Remove GPIO15 jumper and reboot");
+    dbgln("===========================================");
+  } else {
+    dbgln("===========================================");
+    dbgln("  WORK MODE: Modbus TCP ENABLED");
+    dbgln("  Web interface DISABLED");
+    dbgln("  Short GPIO15 to GND for config mode");
+    dbgln("===========================================");
+  }
+  
   dbgln("[ethernet] start");
   
   // ВАЖНО: Отключаем WiFi чтобы избежать конфликта с lwIP
@@ -119,6 +142,7 @@ void setup() {
 #endif
   dbgln("[modbus] start");
 
+  // Уровень логирования (WARNING = только ошибки)
   MBUlogLvl = LOG_LEVEL_WARNING;
   RTUutils::prepareHardwareSerial(modbusSerial);
 #if defined(RX_PIN) && defined(TX_PIN)
@@ -131,18 +155,57 @@ void setup() {
 #endif
 
   MBclient = new ModbusClientRTU(config.getModbusRtsPin());
-  MBclient->setTimeout(1000);
+  MBclient->setTimeout(5000); // Увеличен таймаут до 5000 мс для стабильности
   MBclient->begin(modbusSerial, 1);
-  for (uint8_t i = 1; i < 248; i++)
-  {
-    MBbridge.attachServer(i, i, ANY_FUNCTION_CODE, MBclient);
-  }  
-  MBbridge.start(config.getTcpPort(), 10, config.getTcpTimeout());
+  
+  dbg("[modbus] RTU config: ");
+  dbg(config.getModbusBaudRate());
+  dbg(" baud, ");
+  dbg(config.getModbusDataBits());
+  dbg(" data bits, parity ");
+  dbg(config.getModbusParity());
+  dbg(", stop bits ");
+  dbg(config.getModbusStopBits());
+  dbg(", RTS pin ");
+  dbgln(config.getModbusRtsPin());
+  // Тестовый запрос отключен - он может влиять на состояние bridge
+  // dbgln("[modbus] Testing RTU connection to slave 1...");
+  dbgln("[modbus] RTU test skipped - will respond to TCP requests");
+  
+  // Запускаем Modbus TCP только в рабочем режиме
+  if (!configMode) {
+    for (uint8_t i = 1; i < 248; i++)
+    {
+      MBbridge.attachServer(i, i, ANY_FUNCTION_CODE, MBclient);
+    }  
+    MBbridge.start(config.getTcpPort(), 1, config.getTcpTimeout());
+    dbg("[modbus] TCP bridge started on port ");
+    dbg(config.getTcpPort());
+    dbg(", max clients: 1, timeout ");
+    dbg(config.getTcpTimeout());
+    dbgln(" ms");
+    dbgln("[modbus] Note: uIP configured for 4 max TCP connections");
+  } else {
+    dbgln("[modbus] TCP bridge DISABLED in config mode");
+  }
+  
+  dbg("[modbus] Free heap: ");
+  dbg(ESP.getFreeHeap());
+  dbgln(" bytes");
   dbgln("[modbus] finished");
   
+  // Запускаем веб-сервер только в режиме настройки
   dbgln("[webserver] start");
 #ifdef USE_ENC28J60
-  webUI.begin(MBclient, &MBbridge, &config);
+  if (configMode) {
+    webUI.begin(MBclient, &MBbridge, &config);
+    dbgln("[webserver] Web UI ENABLED for configuration");
+    dbg("[webserver] Access at: http://");
+    dbgln(Ethernet.localIP());
+  } else {
+    dbgln("[webserver] Web UI DISABLED in work mode");
+    dbgln("[webserver] Short GPIO15 to GND and reboot for config");
+  }
 #else
   setupPages(&webServer, MBclient, &MBbridge, &config, &wm);
   webServer.begin();
@@ -154,9 +217,26 @@ void setup() {
 
 void loop() {
 #ifdef USE_ENC28J60
+  static unsigned long lastMemCheck = 0;
+  
   // Поддержка Ethernet соединения
   Ethernet.maintain();
-  // Обработка веб-запросов
-  webUI.loop();
+  
+  // Обрабатываем веб-запросы только в режиме настройки
+  if (configMode) {
+    webUI.loop();
+  }
+  
+  // Мониторинг памяти каждые 10 секунд
+  if (millis() - lastMemCheck > 10000) {
+    lastMemCheck = millis();
+    dbg("[loop] Free heap: ");
+    dbg(ESP.getFreeHeap());
+    dbg(" bytes, Mode: ");
+    dbgln(configMode ? "CONFIG" : "WORK");
+  }
+  
+  // Даем время другим задачам FreeRTOS
+  yield();
 #endif
 }
