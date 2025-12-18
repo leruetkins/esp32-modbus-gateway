@@ -17,6 +17,11 @@
             unsigned long _serialBaudRate;
             uint32_t _serialConfig;
             String _webPassword;
+            bool _useDhcp;
+            IPAddress _staticIp;
+            IPAddress _staticGateway;
+            IPAddress _staticSubnet;
+            IPAddress _staticDns;
         public:
             Config();
             void begin(Preferences *prefs);
@@ -46,6 +51,18 @@
             void setSerialStopBits(uint8_t value);
             String getWebPassword();
             void setWebPassword(String value);
+            
+            // Network settings
+            bool getUseDhcp();
+            void setUseDhcp(bool value);
+            IPAddress getStaticIp();
+            void setStaticIp(IPAddress value);
+            IPAddress getStaticGateway();
+            void setStaticGateway(IPAddress value);
+            IPAddress getStaticSubnet();
+            void setStaticSubnet(IPAddress value);
+            IPAddress getStaticDns();
+            void setStaticDns(IPAddress value);
     };
     #ifdef DEBUG
     #define dbg(x...) debugSerial.print(x);

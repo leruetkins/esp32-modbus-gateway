@@ -10,6 +10,11 @@ Config::Config()
     ,_serialBaudRate(115200)
     ,_serialConfig(SERIAL_8N1)
     ,_webPassword("")
+    ,_useDhcp(true)
+    ,_staticIp(192, 168, 1, 177)
+    ,_staticGateway(192, 168, 1, 1)
+    ,_staticSubnet(255, 255, 255, 0)
+    ,_staticDns(192, 168, 1, 1)
 {}
 
 void Config::begin(Preferences *prefs)
@@ -23,6 +28,13 @@ void Config::begin(Preferences *prefs)
     _serialBaudRate = _prefs->getULong("serialBaudRate", _serialBaudRate);
     _serialConfig = _prefs->getULong("serialConfig", _serialConfig);
     _webPassword = _prefs->getString("webPassword", _webPassword);
+    
+    // Network settings
+    _useDhcp = _prefs->getBool("useDhcp", _useDhcp);
+    _staticIp = _prefs->getUInt("staticIp", (uint32_t)_staticIp);
+    _staticGateway = _prefs->getUInt("staticGw", (uint32_t)_staticGateway);
+    _staticSubnet = _prefs->getUInt("staticSn", (uint32_t)_staticSubnet);
+    _staticDns = _prefs->getUInt("staticDns", (uint32_t)_staticDns);
 }
 
 uint16_t Config::getTcpPort(){
@@ -167,4 +179,51 @@ void Config::setWebPassword(String value){
     if (webpass == value) return;
     _webPassword = value;
     _prefs->putString("webPassword", _webPassword);
+}
+
+// Network configuration methods
+bool Config::getUseDhcp() {
+    return _useDhcp;
+}
+
+void Config::setUseDhcp(bool value) {
+    if (_useDhcp == value) return;
+    _useDhcp = value;
+    _prefs->putBool("useDhcp", _useDhcp);
+}
+
+IPAddress Config::getStaticIp() {
+    return _staticIp;
+}
+
+void Config::setStaticIp(IPAddress value) {
+    _staticIp = value;
+    _prefs->putUInt("staticIp", (uint32_t)_staticIp);
+}
+
+IPAddress Config::getStaticGateway() {
+    return _staticGateway;
+}
+
+void Config::setStaticGateway(IPAddress value) {
+    _staticGateway = value;
+    _prefs->putUInt("staticGw", (uint32_t)_staticGateway);
+}
+
+IPAddress Config::getStaticSubnet() {
+    return _staticSubnet;
+}
+
+void Config::setStaticSubnet(IPAddress value) {
+    _staticSubnet = value;
+    _prefs->putUInt("staticSn", (uint32_t)_staticSubnet);
+}
+
+IPAddress Config::getStaticDns() {
+    return _staticDns;
+}
+
+void Config::setStaticDns(IPAddress value) {
+    _staticDns = value;
+    _prefs->putUInt("staticDns", (uint32_t)_staticDns);
 }
